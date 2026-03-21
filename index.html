@@ -4760,7 +4760,6 @@ async function extractPageGeometryIOS(page,viewport){
   function yu(){return new Promise(r=>setTimeout(r,0));}
   try{
     const ops=await page.getOperatorList(),fn=ops.fnArray,ar=ops.argsArray;
-    if(fn.length>8000){console.warn('[iOS] page too complex, skipping snap');return;}
     const B=30;
     let ctm=[1,0,0,1,0,0];const st=[ctm];
     for(let i=0;i<fn.length;i++){
