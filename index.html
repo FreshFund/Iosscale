@@ -1191,7 +1191,7 @@
   }
 
 
-
+  /* ── iOS LOADING THROBBER ── */
   #ios-throbber{position:fixed;inset:0;z-index:600;background:rgba(10,10,10,0.88);display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
   #ios-throbber.show{display:flex;}
   #ios-throbber-spinner{width:44px;height:44px;border:3px solid rgba(255,255,255,0.12);border-top-color:var(--accent);border-radius:50%;animation:ios-spin 0.8s linear infinite;}
@@ -1200,7 +1200,6 @@
 </style>
 </head>
 <body>
-
 <!-- iOS LOADING THROBBER -->
 <div id="ios-throbber"><div id="ios-throbber-spinner"></div><div id="ios-throbber-label">Loading page…</div></div>
 <!-- SPLASH / ACCESS GATE -->
@@ -1768,10 +1767,15 @@
 
 // ── PDF.JS ──
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
+// ── iOS THROBBER + CANVAS RECOVERY ──
 const _throbberEl=document.getElementById('ios-throbber'),_throbberLbl=document.getElementById('ios-throbber-label');
 function showThrobber(msg){if(!isIOS)return;if(_throbberEl){_throbberEl.classList.add('show');if(_throbberLbl&&msg)_throbberLbl.textContent=msg;}}
 function hideThrobber(){if(_throbberEl)_throbberEl.classList.remove('show');}
+if(isIOS){
+  document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&pdfDoc)requestAnimationFrame(function(){renderPage(currentPage);});});
+  var _pc=document.getElementById('pdf-canvas');
+  if(_pc){_pc.addEventListener('contextlost',function(e){e.preventDefault();});_pc.addEventListener('contextrestored',function(){if(pdfDoc)renderPage(currentPage);});}
+}
 
 
 // ── INLINE SERVICE WORKER ──
@@ -1810,10 +1814,8 @@ document.head.appendChild(mLink);
 
 // ── STATE ──
 let pdfDoc=null, currentPage=1, totalPages=1;
-
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const renderScale=isIOS?1.0:2.0;
-
 let mode=null;         // 'measure'|'calibrate'|'draw'|'select'|'area'|'boxmeasure'|'boxanno'|'circleanno'|'textanno'|'cloudanno'|'perimeter'
 let drawState=null;    // { x, y } canvas coords of point 1
 let anglePts=[];       // [{x,y}] committed points: [hinge, leg1End, leg2End]
@@ -1990,7 +1992,11 @@ function renderPage(num, reset=false) {
       redrawOverlay();
       pagePill.textContent=`${num}/${totalPages}`;
       if(isIOS){
-        extractPageGeometryIOS(page,vp).then(()=>{hideThrobber();if(pageSegments.length>0&&snapEnabled)drawGeometryOverlayIOS();page.cleanup();}).catch(()=>{hideThrobber();page.cleanup();});
+        extractPageGeometryIOS(page,vp).then(()=>{
+          hideThrobber();
+          if(pageSegments.length>0&&snapEnabled)drawGeometryOverlayIOS();
+          page.cleanup();
+        }).catch(()=>{hideThrobber();page.cleanup();});
       }else{
         extractPageGeometry(page, vp).then(() => {
               if (pageSegments.length > 0) {
@@ -2022,7 +2028,7 @@ function applyTransform() {
   _rafRedraw = requestAnimationFrame(()=>{ redrawOverlay(); });
 }
 
-// ── iOS: rAF-debounce redrawOverlay ────────────────────────────────────
+// ── iOS: rAF-debounce redrawOverlay ──
 if (isIOS) {
   var _origRO = redrawOverlay; var _roRaf = null;
   redrawOverlay = function() {
@@ -2030,7 +2036,6 @@ if (isIOS) {
     _roRaf = requestAnimationFrame(function() { _roRaf = null; _origRO(); });
   };
 }
-
 var _cachedVpRect = null;
 window.addEventListener('resize', function() { _cachedVpRect = null; }, {passive:true});
 window.addEventListener('orientationchange', function() { _cachedVpRect = null; }, {passive:true});
@@ -2084,7 +2089,10 @@ async function savePdfBytes(filename, bytes){
     return new Promise((res,rej)=>{
       const tx=db.transaction(IDB_STORE,'readwrite');
       tx.objectStore(IDB_STORE).put(bytes, filename);
-      tx.oncomplete=()=>res(true);
+      tx.oncomplete=()=>{
+        if(isIOS){ currentPdfBytes=null; } // iOS: free main-thread copy
+        res(true);
+      };
       tx.onerror=e=>rej(e.target.error);
     });
   }catch(e){ console.warn('IDB save failed',e); return false; }
@@ -2292,7 +2300,14 @@ renderSessionList();
       const latest=index[0];
       const bytes=await loadPdfBytes(latest.filename);
       if(bytes){
-        loadSessionFromStore(latest.filename);
+        if(isIOS){
+          document.addEventListener('pointerdown',function _r(){
+            document.removeEventListener('pointerdown',_r);
+            loadSessionFromStore(latest.filename);
+          },{once:true,passive:true});
+        } else {
+          loadSessionFromStore(latest.filename);
+        }
       }
     }
   } catch(e){}
@@ -4776,9 +4791,7 @@ async function extractPageGeometryIOS(page,viewport){
     const seen=new Set(),deduped=[];
     for(let i=0;i<pageSegments.length;i++){
       if(i%500===0)await yu();
-      const s=pageSegments[i];
-      const k=Math.round(s.x1)+','+Math.round(s.y1)+','+Math.round(s.x2)+','+Math.round(s.y2);
-      const r=Math.round(s.x2)+','+Math.round(s.y2)+','+Math.round(s.x1)+','+Math.round(s.y1);
+      const s=pageSegments[i];const k=Math.round(s.x1)+','+Math.round(s.y1)+','+Math.round(s.x2)+','+Math.round(s.y2);const r=Math.round(s.x2)+','+Math.round(s.y2)+','+Math.round(s.x1)+','+Math.round(s.y1);
       if(!seen.has(k)&&!seen.has(r)){seen.add(k);deduped.push(s);}
     }
     pageSegments=deduped;
@@ -4802,11 +4815,6 @@ function drawGeometryOverlayIOS(){
   if(!pageSegments||!pageSegments.length){_g.innerHTML='';return;}
   var d=pageSegments.map(function(s){return'M'+s.x1+','+s.y1+'L'+s.x2+','+s.y2;}).join('');
   _g.innerHTML='<path d="'+d+'" stroke="rgba(0,120,255,0.25)" stroke-width="0.5" fill="none" pointer-events="none"/>';
-}
-
-function clearGeometryOverlayIOS(){
-  var _g=document.getElementById('_iosGeoSvg');
-  if(_g)_g.innerHTML='';
 }
 
 // ── Ghost geometry overlay ────────────────────────
