@@ -1997,6 +1997,16 @@ function fitToScreen() {
 }
 
 let _rafRedraw = null;
+// iOS: throttle redrawOverlay to one call per animation frame
+if (isIOS) {
+  var _raf_ro = null;
+  var _origRedrawOverlay = redrawOverlay;
+  redrawOverlay = function () {
+    if (_raf_ro) cancelAnimationFrame(_raf_ro);
+    _raf_ro = requestAnimationFrame(function () { _raf_ro = null; _origRedrawOverlay(); });
+  };
+}
+
 function applyTransform() {
   canvasWrap.style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
   zoomPill.textContent=Math.round(zoom*100)+'%';
@@ -2008,9 +2018,16 @@ function applyTransform() {
   _rafRedraw = requestAnimationFrame(()=>{ redrawOverlay(); });
 }
 
-function screenToCanvas(sx,sy) {
-  const r=canvasViewport.getBoundingClientRect();
-  return { x:(sx-r.left-panX)/zoom, y:(sy-r.top-panY)/zoom };
+var _vpRectCache = null;
+if (isIOS) {
+  window.addEventListener('resize', function () { _vpRectCache = null; }, { passive: true });
+  window.addEventListener('orientationchange', function () { _vpRectCache = null; }, { passive: true });
+}
+function screenToCanvas(sx, sy) {
+  var r = isIOS
+    ? (_vpRectCache || (_vpRectCache = canvasViewport.getBoundingClientRect()))
+    : canvasViewport.getBoundingClientRect();
+  return { x: (sx - r.left - panX) / zoom, y: (sy - r.top - panY) / zoom };
 }
 
 // ── ANGLE SNAPPING ──
@@ -2265,9 +2282,9 @@ renderSessionList();
       const bytes=await loadPdfBytes(latest.filename);
       if (bytes) {
         if (isIOS) {
-          // defer restore until first tap to avoid cold-start OOM
-          document.addEventListener('pointerdown', function _deferRestore() {
-            document.removeEventListener('pointerdown', _deferRestore);
+          // defer until first tap to avoid cold-start OOM
+          document.addEventListener('pointerdown', function _dr() {
+            document.removeEventListener('pointerdown', _dr);
             loadSessionFromStore(latest.filename);
           }, { once: true, passive: true });
         } else {
