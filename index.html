@@ -1996,26 +1996,21 @@ function fitToScreen() {
   applyTransform();
 }
 
-let _rafRedraw = null;
-// iOS: throttle redrawOverlay to one call per animation frame
-if (isIOS) {
-  var _raf_ro = null;
-  var _origRedrawOverlay = redrawOverlay;
-  redrawOverlay = function () {
-    if (_raf_ro) cancelAnimationFrame(_raf_ro);
-    _raf_ro = requestAnimationFrame(function () { _raf_ro = null; _origRedrawOverlay(); });
-  };
-}
-
+let _rafRedraw = null, _iosRDTimer = null;
 function applyTransform() {
   canvasWrap.style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
   zoomPill.textContent=Math.round(zoom*100)+'%';
   zoomPill.classList.add('show');
   clearTimeout(zoomTimer);
   zoomTimer=setTimeout(()=>{ zoomPill.classList.remove('show'); },900);
-  // Redraw labels in real-time during pinch — rAF-throttled so we never queue more than one
-  cancelAnimationFrame(_rafRedraw);
-  _rafRedraw = requestAnimationFrame(()=>{ redrawOverlay(); });
+  // iOS: skip SVG rebuild during pan — fire once 150ms after finger lifts
+  if (isIOS) {
+    clearTimeout(_iosRDTimer);
+    _iosRDTimer = setTimeout(function () { redrawOverlay(); }, 150);
+  } else {
+    cancelAnimationFrame(_rafRedraw);
+    _rafRedraw = requestAnimationFrame(function () { redrawOverlay(); });
+  }
 }
 
 var _vpRectCache = null;
@@ -2282,7 +2277,6 @@ renderSessionList();
       const bytes=await loadPdfBytes(latest.filename);
       if (bytes) {
         if (isIOS) {
-          // defer until first tap to avoid cold-start OOM
           document.addEventListener('pointerdown', function _dr() {
             document.removeEventListener('pointerdown', _dr);
             loadSessionFromStore(latest.filename);
