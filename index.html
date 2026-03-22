@@ -1191,17 +1191,22 @@
   }
 
 
-  /* ── iOS LOADING THROBBER ── */
-  #ios-throbber{position:fixed;inset:0;z-index:600;background:rgba(10,10,10,0.88);display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
+  /* iOS throbber */
+  #ios-throbber{position:fixed;inset:0;z-index:600;background:rgba(10,10,10,0.88);
+    display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
   #ios-throbber.show{display:flex;}
-  #ios-throbber-spinner{width:44px;height:44px;border:3px solid rgba(255,255,255,0.12);border-top-color:var(--accent);border-radius:50%;animation:ios-spin 0.8s linear infinite;}
+  #ios-throbber-spinner{width:44px;height:44px;border:3px solid rgba(255,255,255,0.12);
+    border-top-color:#ff0000;border-radius:50%;animation:ios-spin 0.8s linear infinite;}
   @keyframes ios-spin{to{transform:rotate(360deg);}}
-  #ios-throbber-label{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;}
+  #ios-throbber-msg{font-family:'DM Mono',monospace;font-size:11px;color:#666;
+    letter-spacing:0.08em;text-transform:uppercase;}
 </style>
 </head>
 <body>
-<!-- iOS LOADING THROBBER -->
-<div id="ios-throbber"><div id="ios-throbber-spinner"></div><div id="ios-throbber-label">Loading page…</div></div>
+<!-- iOS throbber -->
+<div id="ios-throbber"><div id="ios-throbber-spinner"></div><div id="ios-throbber-msg">Loading…</div></div>
+
 <!-- SPLASH / ACCESS GATE -->
 <div id="splash">
   <div id="splash-card">
@@ -1767,14 +1772,19 @@
 
 // ── PDF.JS ──
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-// ── iOS THROBBER + CANVAS RECOVERY ──
-const _throbberEl=document.getElementById('ios-throbber'),_throbberLbl=document.getElementById('ios-throbber-label');
-function showThrobber(msg){if(!isIOS)return;if(_throbberEl){_throbberEl.classList.add('show');if(_throbberLbl&&msg)_throbberLbl.textContent=msg;}}
-function hideThrobber(){if(_throbberEl)_throbberEl.classList.remove('show');}
+
+// ── iOS helpers ──
+var _iosThrobber=null,_iosThrobberMsg=null;
+function _initThrobber(){if(_iosThrobber)return;_iosThrobber=document.getElementById('ios-throbber');_iosThrobberMsg=document.getElementById('ios-throbber-msg');}
+function showThrobber(msg){if(!isIOS)return;_initThrobber();if(_iosThrobber)_iosThrobber.classList.add('show');if(_iosThrobberMsg&&msg)_iosThrobberMsg.textContent=msg;}
+function hideThrobber(){_initThrobber();if(_iosThrobber)_iosThrobber.classList.remove('show');}
 if(isIOS){
-  document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&pdfDoc)requestAnimationFrame(function(){renderPage(currentPage);});});
-  var _pc=document.getElementById('pdf-canvas');
-  if(_pc){_pc.addEventListener('contextlost',function(e){e.preventDefault();});_pc.addEventListener('contextrestored',function(){if(pdfDoc)renderPage(currentPage);});}
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='visible'&&pdfDoc)renderPage(currentPage);
+  });
+  window.addEventListener('pageshow',function(e){
+    if(e.persisted&&pdfDoc)renderPage(currentPage);
+  });
 }
 
 
@@ -1975,7 +1985,6 @@ async function loadSessionFromStore(filename) {
 }
 
 function renderPage(num, reset=false) {
-  if(isIOS)showThrobber('Loading page…');
   pdfDoc.getPage(num).then(page => {
     const vp = page.getViewport({ scale: renderScale });
     pdfCanvas.width=vp.width; pdfCanvas.height=vp.height;
@@ -1986,18 +1995,25 @@ function renderPage(num, reset=false) {
     page.render({ canvasContext: pdfCanvas.getContext('2d'), viewport: vp }).promise.then(() => {
       if (reset) {
         fitToScreen();
+        // Try to restore session for this filename
         loadSession(currentFilename);
-        if (!mode) { mode='select'; selectBtn.classList.add('active'); }
+        // Default to select mode on fresh load
+        if (!mode) {
+          mode = 'select';
+          selectBtn.classList.add('active');
+        }
       }
       redrawOverlay();
       pagePill.textContent=`${num}/${totalPages}`;
+      // Extract CAD geometry for snapping (async, non-blocking)
       if(isIOS){
-        extractPageGeometryIOS(page,vp).then(()=>{
+        showThrobber('Indexing…');
+        extractPageGeometryIOS(page,vp).then(function(){
           hideThrobber();
-          if(pageSegments.length>0&&snapEnabled)drawGeometryOverlayIOS();
-          page.cleanup();
-        }).catch(()=>{hideThrobber();page.cleanup();});
-      }else{
+          if(pageSegments.length>0&&snapEnabled)drawGeometryOverlay();
+          try{page.cleanup();}catch(e){}
+        }).catch(function(e){console.warn(e);hideThrobber();});
+      } else {
         extractPageGeometry(page, vp).then(() => {
               if (pageSegments.length > 0) {
           if (snapEnabled) drawGeometryOverlay();
@@ -2028,22 +2044,18 @@ function applyTransform() {
   _rafRedraw = requestAnimationFrame(()=>{ redrawOverlay(); });
 }
 
-// ── iOS: rAF-debounce redrawOverlay ──
-if (isIOS) {
-  var _origRO = redrawOverlay; var _roRaf = null;
-  redrawOverlay = function() {
-    if (_roRaf) cancelAnimationFrame(_roRaf);
-    _roRaf = requestAnimationFrame(function() { _roRaf = null; _origRO(); });
-  };
+// iOS: throttle redrawOverlay with rAF
+if(isIOS){
+  var _origRedraw=redrawOverlay,_raf=null;
+  redrawOverlay=function(){if(_raf)cancelAnimationFrame(_raf);_raf=requestAnimationFrame(function(){_raf=null;_origRedraw();});};
 }
-var _cachedVpRect = null;
-window.addEventListener('resize', function() { _cachedVpRect = null; }, {passive:true});
-window.addEventListener('orientationchange', function() { _cachedVpRect = null; }, {passive:true});
-function screenToCanvas(sx,sy) {
-  const r = isIOS
-    ? (_cachedVpRect || (_cachedVpRect = canvasViewport.getBoundingClientRect()))
-    : canvasViewport.getBoundingClientRect();
-  return { x:(sx-r.left-panX)/zoom, y:(sy-r.top-panY)/zoom };
+
+var _vpRect=null;
+window.addEventListener('resize',function(){_vpRect=null;},{passive:true});
+window.addEventListener('orientationchange',function(){_vpRect=null;},{passive:true});
+function screenToCanvas(sx,sy){
+  var r=isIOS?(_vpRect||(_vpRect=canvasViewport.getBoundingClientRect())):canvasViewport.getBoundingClientRect();
+  return{x:(sx-r.left-panX)/zoom,y:(sy-r.top-panY)/zoom};
 }
 
 // ── ANGLE SNAPPING ──
@@ -2089,10 +2101,7 @@ async function savePdfBytes(filename, bytes){
     return new Promise((res,rej)=>{
       const tx=db.transaction(IDB_STORE,'readwrite');
       tx.objectStore(IDB_STORE).put(bytes, filename);
-      tx.oncomplete=()=>{
-        if(isIOS){ currentPdfBytes=null; } // iOS: free main-thread copy
-        res(true);
-      };
+      tx.oncomplete=()=>{if(isIOS){currentPdfBytes=null;}res(true);};
       tx.onerror=e=>rej(e.target.error);
     });
   }catch(e){ console.warn('IDB save failed',e); return false; }
@@ -2300,14 +2309,7 @@ renderSessionList();
       const latest=index[0];
       const bytes=await loadPdfBytes(latest.filename);
       if(bytes){
-        if(isIOS){
-          document.addEventListener('pointerdown',function _r(){
-            document.removeEventListener('pointerdown',_r);
-            loadSessionFromStore(latest.filename);
-          },{once:true,passive:true});
-        } else {
-          loadSessionFromStore(latest.filename);
-        }
+        if(isIOS){document.addEventListener('pointerdown',function _r(){document.removeEventListener('pointerdown',_r);loadSessionFromStore(latest.filename);},{once:true,passive:true});}else{loadSessionFromStore(latest.filename);}
       }
     }
   } catch(e){}
@@ -4767,54 +4769,45 @@ async function extractPageGeometry(page, viewport) {
 
 }
 
+// ── iOS batched geometry extractor ──
 async function extractPageGeometryIOS(page,viewport){
   pageSegments=[];snapGrid=null;
-  const vt=viewport.transform;
+  var vt=viewport.transform;
   function cc(c,m){return[c[0]*m[0]+c[2]*m[1],c[1]*m[0]+c[3]*m[1],c[0]*m[2]+c[2]*m[3],c[1]*m[2]+c[3]*m[3],c[0]*m[4]+c[2]*m[5]+c[4],c[1]*m[4]+c[3]*m[5]+c[5]];}
-  function mh(ctm){function pc(px,py){const x=ctm[0]*px+ctm[2]*py+ctm[4],y=ctm[1]*px+ctm[3]*py+ctm[5];return{x:vt[0]*x+vt[2]*y+vt[4],y:vt[1]*x+vt[3]*y+vt[5]};}function ps(ax,ay,bx,by){const p1=pc(ax,ay),p2=pc(bx,by);if(Math.hypot(p2.x-p1.x,p2.y-p1.y)>=2)pageSegments.push({x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,isCurve:false});}return{pdfToCanvas:pc,pushSeg:ps};}
-  function yu(){return new Promise(r=>setTimeout(r,0));}
+  function mh(ctm){
+    function pc(px,py){var x=ctm[0]*px+ctm[2]*py+ctm[4],y=ctm[1]*px+ctm[3]*py+ctm[5];return{x:vt[0]*x+vt[2]*y+vt[4],y:vt[1]*x+vt[3]*y+vt[5]};}
+    function ps(ax,ay,bx,by){var p1=pc(ax,ay),p2=pc(bx,by);if(Math.hypot(p2.x-p1.x,p2.y-p1.y)>=2)pageSegments.push({x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,isCurve:false});}
+    return{pdfToCanvas:pc,pushSeg:ps};
+  }
+  function yn(){return new Promise(function(r){setTimeout(r,0);});}
   try{
-    const ops=await page.getOperatorList(),fn=ops.fnArray,ar=ops.argsArray;
-    const B=30;
-    let ctm=[1,0,0,1,0,0];const st=[ctm];
-    for(let i=0;i<fn.length;i++){
-      if(i>0&&i%B===0)await yu();
-      const f=fn[i],a=ar[i];
-      if(f===_OPC.save)st.push([...ctm]);
+    var ops=await page.getOperatorList(),fn=ops.fnArray,ar=ops.argsArray;
+    var ctm=[1,0,0,1,0,0],st=[ctm.slice()];
+    for(var i=0;i<fn.length;i++){
+      if(i%40===0)await yn();
+      var f=fn[i],a=ar[i];
+      if(f===_OPC.save)st.push(ctm.slice());
       else if(f===_OPC.restore){if(st.length>1)ctm=st.pop();}
       else if(f===_OPC.transform)ctm=cc(ctm,a);
-      else if(f===_OPC.paintFormXObjectBegin){st.push([...ctm]);if(a&&Array.isArray(a[1])&&a[1].length===6)ctm=cc(ctm,a[1]);}
+      else if(f===_OPC.paintFormXObjectBegin){st.push(ctm.slice());if(a&&Array.isArray(a[1])&&a[1].length===6)ctm=cc(ctm,a[1]);}
       else if(f===_OPC.paintFormXObjectEnd){if(st.length>1)ctm=st.pop();}
-      else if(f===_OPC.constructPath){const{pdfToCanvas,pushSeg}=mh(ctm);decodeConstructPath(a[0],a[1],pdfToCanvas,pushSeg);if(pageSegments.length%200===0)await yu();}
+      else if(f===_OPC.constructPath){
+        var h=mh(ctm);decodeConstructPath(a[0],a[1],h.pdfToCanvas,h.pushSeg);
+        if(pageSegments.length%300===0)await yn();
+      }
     }
-    await yu();
-    const seen=new Set(),deduped=[];
-    for(let i=0;i<pageSegments.length;i++){
-      if(i%500===0)await yu();
-      const s=pageSegments[i];const k=Math.round(s.x1)+','+Math.round(s.y1)+','+Math.round(s.x2)+','+Math.round(s.y2);const r=Math.round(s.x2)+','+Math.round(s.y2)+','+Math.round(s.x1)+','+Math.round(s.y1);
-      if(!seen.has(k)&&!seen.has(r)){seen.add(k);deduped.push(s);}
+    await yn();
+    var seen=new Set(),dd=[];
+    for(var j=0;j<pageSegments.length;j++){
+      if(j%500===0)await yn();
+      var s=pageSegments[j];
+      var k=Math.round(s.x1)+','+Math.round(s.y1)+','+Math.round(s.x2)+','+Math.round(s.y2);
+      var r=Math.round(s.x2)+','+Math.round(s.y2)+','+Math.round(s.x1)+','+Math.round(s.y1);
+      if(!seen.has(k)&&!seen.has(r)){seen.add(k);dd.push(s);}
     }
-    pageSegments=deduped;
-    await yu();
+    pageSegments=dd;await yn();
     snapGrid=buildSnapGrid(pageSegments);
-    await yu();
-  }catch(e){console.warn('[iOS]',e);}
-}
-
-function drawGeometryOverlayIOS(){
-  clearGeometryOverlay();
-  var _g=document.getElementById('_iosGeoSvg');
-  if(!_g){
-    _g=document.createElementNS('http://www.w3.org/2000/svg','svg');
-    _g.id='_iosGeoSvg';
-    _g.style.cssText='position:absolute;top:0;left:0;pointer-events:none;overflow:visible;';
-    svgOverlay.parentNode.insertBefore(_g,svgOverlay);
-  }
-  _g.setAttribute('width',svgOverlay.getAttribute('width'));
-  _g.setAttribute('height',svgOverlay.getAttribute('height'));
-  if(!pageSegments||!pageSegments.length){_g.innerHTML='';return;}
-  var d=pageSegments.map(function(s){return'M'+s.x1+','+s.y1+'L'+s.x2+','+s.y2;}).join('');
-  _g.innerHTML='<path d="'+d+'" stroke="rgba(0,120,255,0.25)" stroke-width="0.5" fill="none" pointer-events="none"/>';
+  }catch(e){console.warn('[iOS snap]',e);}
 }
 
 // ── Ghost geometry overlay ────────────────────────
