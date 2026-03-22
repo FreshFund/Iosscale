@@ -1191,22 +1191,9 @@
   }
 
 
-  /* iOS throbber */
-  #ios-throbber{position:fixed;inset:0;z-index:600;background:rgba(10,10,10,0.88);
-    display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;
-    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
-  #ios-throbber.show{display:flex;}
-  #ios-throbber-spinner{width:44px;height:44px;border:3px solid rgba(255,255,255,0.12);
-    border-top-color:#ff0000;border-radius:50%;animation:ios-spin 0.8s linear infinite;}
-  @keyframes ios-spin{to{transform:rotate(360deg);}}
-  #ios-throbber-msg{font-family:'DM Mono',monospace;font-size:11px;color:#666;
-    letter-spacing:0.08em;text-transform:uppercase;}
 </style>
 </head>
 <body>
-<!-- iOS throbber -->
-<div id="ios-throbber"><div id="ios-throbber-spinner"></div><div id="ios-throbber-msg">Loading…</div></div>
-
 <!-- SPLASH / ACCESS GATE -->
 <div id="splash">
   <div id="splash-card">
@@ -1773,21 +1760,6 @@
 // ── PDF.JS ──
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-// ── iOS helpers ──
-var _iosThrobber=null,_iosThrobberMsg=null;
-function _initThrobber(){if(_iosThrobber)return;_iosThrobber=document.getElementById('ios-throbber');_iosThrobberMsg=document.getElementById('ios-throbber-msg');}
-function showThrobber(msg){if(!isIOS)return;_initThrobber();if(_iosThrobber)_iosThrobber.classList.add('show');if(_iosThrobberMsg&&msg)_iosThrobberMsg.textContent=msg;}
-function hideThrobber(){_initThrobber();if(_iosThrobber)_iosThrobber.classList.remove('show');}
-if(isIOS){
-  document.addEventListener('visibilitychange',function(){
-    if(document.visibilityState==='visible'&&pdfDoc)renderPage(currentPage);
-  });
-  window.addEventListener('pageshow',function(e){
-    if(e.persisted&&pdfDoc)renderPage(currentPage);
-  });
-}
-
-
 // ── INLINE SERVICE WORKER ──
 const swCode = `
 const CACHE='mpdf-v2';
@@ -1824,8 +1796,9 @@ document.head.appendChild(mLink);
 
 // ── STATE ──
 let pdfDoc=null, currentPage=1, totalPages=1;
-const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const renderScale=isIOS?1.0:2.0;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const renderScale = isIOS ? 1.0 : 2.0;
 let mode=null;         // 'measure'|'calibrate'|'draw'|'select'|'area'|'boxmeasure'|'boxanno'|'circleanno'|'textanno'|'cloudanno'|'perimeter'
 let drawState=null;    // { x, y } canvas coords of point 1
 let anglePts=[];       // [{x,y}] committed points: [hinge, leg1End, leg2End]
@@ -2006,20 +1979,11 @@ function renderPage(num, reset=false) {
       redrawOverlay();
       pagePill.textContent=`${num}/${totalPages}`;
       // Extract CAD geometry for snapping (async, non-blocking)
-      if(isIOS){
-        showThrobber('Indexing…');
-        extractPageGeometryIOS(page,vp).then(function(){
-          hideThrobber();
-          if(pageSegments.length>0&&snapEnabled)drawGeometryOverlay();
-          try{page.cleanup();}catch(e){}
-        }).catch(function(e){console.warn(e);hideThrobber();});
-      } else {
-        extractPageGeometry(page, vp).then(() => {
+      extractPageGeometry(page, vp).then(() => {
               if (pageSegments.length > 0) {
           if (snapEnabled) drawGeometryOverlay();
         }
-        });
-      }
+      });
     });
   });
 }
@@ -2044,18 +2008,9 @@ function applyTransform() {
   _rafRedraw = requestAnimationFrame(()=>{ redrawOverlay(); });
 }
 
-// iOS: throttle redrawOverlay with rAF
-if(isIOS){
-  var _origRedraw=redrawOverlay,_raf=null;
-  redrawOverlay=function(){if(_raf)cancelAnimationFrame(_raf);_raf=requestAnimationFrame(function(){_raf=null;_origRedraw();});};
-}
-
-var _vpRect=null;
-window.addEventListener('resize',function(){_vpRect=null;},{passive:true});
-window.addEventListener('orientationchange',function(){_vpRect=null;},{passive:true});
-function screenToCanvas(sx,sy){
-  var r=isIOS?(_vpRect||(_vpRect=canvasViewport.getBoundingClientRect())):canvasViewport.getBoundingClientRect();
-  return{x:(sx-r.left-panX)/zoom,y:(sy-r.top-panY)/zoom};
+function screenToCanvas(sx,sy) {
+  const r=canvasViewport.getBoundingClientRect();
+  return { x:(sx-r.left-panX)/zoom, y:(sy-r.top-panY)/zoom };
 }
 
 // ── ANGLE SNAPPING ──
@@ -2101,8 +2056,8 @@ async function savePdfBytes(filename, bytes){
     return new Promise((res,rej)=>{
       const tx=db.transaction(IDB_STORE,'readwrite');
       tx.objectStore(IDB_STORE).put(bytes, filename);
-      tx.oncomplete=()=>{if(isIOS){currentPdfBytes=null;}res(true);};
-      tx.onerror=e=>rej(e.target.error);
+      tx.oncomplete = () => { if (isIOS) { currentPdfBytes = null; } res(true); };
+      tx.onerror = e => rej(e.target.error);
     });
   }catch(e){ console.warn('IDB save failed',e); return false; }
 }
@@ -2308,8 +2263,16 @@ renderSessionList();
     if(index.length>0){
       const latest=index[0];
       const bytes=await loadPdfBytes(latest.filename);
-      if(bytes){
-        if(isIOS){document.addEventListener('pointerdown',function _r(){document.removeEventListener('pointerdown',_r);loadSessionFromStore(latest.filename);},{once:true,passive:true});}else{loadSessionFromStore(latest.filename);}
+      if (bytes) {
+        if (isIOS) {
+          // defer restore until first tap to avoid cold-start OOM
+          document.addEventListener('pointerdown', function _deferRestore() {
+            document.removeEventListener('pointerdown', _deferRestore);
+            loadSessionFromStore(latest.filename);
+          }, { once: true, passive: true });
+        } else {
+          loadSessionFromStore(latest.filename);
+        }
       }
     }
   } catch(e){}
@@ -4767,47 +4730,6 @@ async function extractPageGeometry(page, viewport) {
   } catch(e) {
   }
 
-}
-
-// ── iOS batched geometry extractor ──
-async function extractPageGeometryIOS(page,viewport){
-  pageSegments=[];snapGrid=null;
-  var vt=viewport.transform;
-  function cc(c,m){return[c[0]*m[0]+c[2]*m[1],c[1]*m[0]+c[3]*m[1],c[0]*m[2]+c[2]*m[3],c[1]*m[2]+c[3]*m[3],c[0]*m[4]+c[2]*m[5]+c[4],c[1]*m[4]+c[3]*m[5]+c[5]];}
-  function mh(ctm){
-    function pc(px,py){var x=ctm[0]*px+ctm[2]*py+ctm[4],y=ctm[1]*px+ctm[3]*py+ctm[5];return{x:vt[0]*x+vt[2]*y+vt[4],y:vt[1]*x+vt[3]*y+vt[5]};}
-    function ps(ax,ay,bx,by){var p1=pc(ax,ay),p2=pc(bx,by);if(Math.hypot(p2.x-p1.x,p2.y-p1.y)>=2)pageSegments.push({x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,isCurve:false});}
-    return{pdfToCanvas:pc,pushSeg:ps};
-  }
-  function yn(){return new Promise(function(r){setTimeout(r,0);});}
-  try{
-    var ops=await page.getOperatorList(),fn=ops.fnArray,ar=ops.argsArray;
-    var ctm=[1,0,0,1,0,0],st=[ctm.slice()];
-    for(var i=0;i<fn.length;i++){
-      if(i%40===0)await yn();
-      var f=fn[i],a=ar[i];
-      if(f===_OPC.save)st.push(ctm.slice());
-      else if(f===_OPC.restore){if(st.length>1)ctm=st.pop();}
-      else if(f===_OPC.transform)ctm=cc(ctm,a);
-      else if(f===_OPC.paintFormXObjectBegin){st.push(ctm.slice());if(a&&Array.isArray(a[1])&&a[1].length===6)ctm=cc(ctm,a[1]);}
-      else if(f===_OPC.paintFormXObjectEnd){if(st.length>1)ctm=st.pop();}
-      else if(f===_OPC.constructPath){
-        var h=mh(ctm);decodeConstructPath(a[0],a[1],h.pdfToCanvas,h.pushSeg);
-        if(pageSegments.length%300===0)await yn();
-      }
-    }
-    await yn();
-    var seen=new Set(),dd=[];
-    for(var j=0;j<pageSegments.length;j++){
-      if(j%500===0)await yn();
-      var s=pageSegments[j];
-      var k=Math.round(s.x1)+','+Math.round(s.y1)+','+Math.round(s.x2)+','+Math.round(s.y2);
-      var r=Math.round(s.x2)+','+Math.round(s.y2)+','+Math.round(s.x1)+','+Math.round(s.y1);
-      if(!seen.has(k)&&!seen.has(r)){seen.add(k);dd.push(s);}
-    }
-    pageSegments=dd;await yn();
-    snapGrid=buildSnapGrid(pageSegments);
-  }catch(e){console.warn('[iOS snap]',e);}
 }
 
 // ── Ghost geometry overlay ────────────────────────
