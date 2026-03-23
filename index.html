@@ -969,12 +969,12 @@
   #install-dismiss:active { background: var(--surface); }
 
   /* iOS Safari zooms the viewport on any input/select with font-size < 16px.
-   * Override only on iOS (detected via the hover media query absence)
-   * using the standard CSS workaround: force 16px on focus, then revert via transform.
-   * The @supports touch-action trick targets only mobile webkit. */
+   * Prevent that by ensuring 16px minimum on all interactive inputs on iOS.
+   * Using @supports to target only iOS/WebKit without affecting other browsers. */
   @supports (-webkit-touch-callout: none) {
-    input, select, textarea {
-      font-size: max(16px, 1em) !important;
+    input[type="text"], input[type="number"], input[type="password"],
+    input[type="search"], input[type="email"], textarea {
+      font-size: 16px !important;
     }
   }
 
@@ -1968,11 +1968,11 @@ async function loadSessionFromStore(filename) {
   const raw = await loadPdfBytes(filename);
   if (!raw) { showToast('PDF not found in storage'); return; }
   currentFilename = filename;
-  // Own the buffer with .slice(0) so IDB doesn't neuter it later, and use the
-  // exact same reference for both pdfjsLib and currentPdfBytes.
-  const bytes = raw instanceof ArrayBuffer ? raw.slice(0) : raw;
-  currentPdfBytes = bytes;
-  pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise.then(doc => {
+  // Slice to own the buffer cleanly. Pass the SAME slice to both currentPdfBytes
+  // and pdfjsLib — they must reference identical memory so neither can detach the other.
+  const ownedBytes = raw instanceof ArrayBuffer ? raw.slice(0) : raw.buffer ? raw.buffer.slice(0) : raw;
+  currentPdfBytes = ownedBytes;
+  pdfjsLib.getDocument({ data: new Uint8Array(ownedBytes) }).promise.then(doc => {
     pdfDoc=doc; totalPages=doc.numPages; currentPage=1;
     measurements=[]; annotations=[]; calibration=null; calLine=null; selectedItem=null;
     scaleBadge.classList.remove('visible');
@@ -2030,16 +2030,16 @@ function renderPage(num, reset=false) {
 }
 
 function fitToScreen() {
+  // Force a synchronous reflow so iOS has computed the element's dimensions.
+  // Reading offsetHeight is a well-known trick that flushes pending layout.
+  void canvasArea.offsetHeight;
   const vw=canvasViewport.clientWidth, vh=canvasViewport.clientHeight;
-  // On iOS the first render can happen before layout is ready — clientWidth/Height are 0.
-  // Defer by one animation frame so the browser has had a chance to reflow.
-  if (vw === 0 || vh === 0) {
-    requestAnimationFrame(fitToScreen);
-    return;
-  }
   const cw=pdfCanvas.width, ch=pdfCanvas.height;
-  zoom=Math.max(minZoom,Math.min(maxZoom,Math.min((vw-32)/cw,(vh-32)/ch)));
-  panX=(vw-cw*zoom)/2; panY=Math.max(16,(vh-ch*zoom)/2);
+  // Fallback: if layout still hasn't resolved (very rare), use window dimensions minus bars
+  const safeVw = vw > 0 ? vw : window.innerWidth;
+  const safeVh = vh > 0 ? vh : (window.innerHeight - 56 - 72); // approx topbar + bottombar
+  zoom=Math.max(minZoom,Math.min(maxZoom,Math.min((safeVw-32)/cw,(safeVh-32)/ch)));
+  panX=(safeVw-cw*zoom)/2; panY=Math.max(16,(safeVh-ch*zoom)/2);
   applyTransform();
 }
 
