@@ -1881,6 +1881,7 @@ window.addEventListener('appinstalled', () => installBanner.classList.remove('sh
 
 // ── PDF LOADING ──
 function loadPDF(file) {
+  if (isIOS) { pageSegments = []; snapGrid = null; } // free prev PDF geometry
   currentFilename=file.name;
   const reader = new FileReader();
   reader.onload = e => {
@@ -1888,6 +1889,7 @@ function loadPDF(file) {
     currentPdfBytes = bytes;
     savePdfBytes(currentFilename, bytes);
     pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise.then(doc => {
+      if (isIOS) { currentPdfBytes = null; } // pdf.js worker has it, free main-thread copy
       pdfDoc=doc; totalPages=doc.numPages; currentPage=1;
       measurements=[]; annotations=[]; calibration=null; calLine=null; selectedItem=null;
       scaleBadge.classList.remove('visible');
@@ -1943,6 +1945,7 @@ async function loadSessionFromStore(filename) {
   currentFilename = filename;
   currentPdfBytes = bytes;
   pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise.then(doc => {
+    if (isIOS) { currentPdfBytes = null; } // pdf.js worker has it, free main-thread copy
     pdfDoc=doc; totalPages=doc.numPages; currentPage=1;
     measurements=[]; annotations=[]; calibration=null; calLine=null; selectedItem=null;
     scaleBadge.classList.remove('visible');
@@ -2003,7 +2006,7 @@ function applyTransform() {
   zoomPill.classList.add('show');
   clearTimeout(zoomTimer);
   zoomTimer=setTimeout(()=>{ zoomPill.classList.remove('show'); },900);
-  // iOS: skip SVG rebuild during pan — fire once 150ms after finger lifts
+  // iOS: skip SVG rebuild during pan — one redraw 150 ms after finger lifts
   if (isIOS) {
     clearTimeout(_iosRDTimer);
     _iosRDTimer = setTimeout(function () { redrawOverlay(); }, 150);
