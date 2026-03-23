@@ -41,6 +41,13 @@
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
+    /* Prevent iOS long-press context menu (image save / copy link) inside the app */
+    -webkit-touch-callout: none;
+  }
+
+  /* iOS momentum scrolling for the session list */
+  #session-list {
+    -webkit-overflow-scrolling: touch;
   }
 
 
@@ -730,7 +737,7 @@
       left: auto !important;
       right: 62px !important;
       transform: translateY(-50%) scale(0.92) !important;
-      max-height: calc(100dvh - 24px);
+      max-height: calc(100vh - 24px); /* dvh not supported on iOS < 16 */
       overflow-y: auto;
       flex-direction: column;
     }
@@ -822,7 +829,8 @@
     padding: 20px 20px 12px;
     display: flex; flex-direction: column; gap: 12px;
     animation: slideUp 0.22s cubic-bezier(0.34,1.4,0.64,1);
-    padding-bottom: max(44px, calc(env(keyboard-inset-height, 0px) + 32px));
+    /* env(keyboard-inset-height) is Chrome-Android only — use safe-area fallback for iOS */
+    padding-bottom: max(44px, env(safe-area-inset-bottom, 0px));
   }
   #saveas-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -874,7 +882,8 @@
     padding: 20px 20px 12px;
     display: flex; flex-direction: column; gap: 12px;
     animation: slideUp 0.22s cubic-bezier(0.34,1.4,0.64,1);
-    padding-bottom: max(44px, calc(env(keyboard-inset-height, 0px) + 32px));
+    /* env(keyboard-inset-height) is Chrome-Android only — iOS keyboard avoidance is handled by JS */
+    padding-bottom: max(44px, env(safe-area-inset-bottom, 0px));
   }
   @keyframes slideUp { from { transform: translateY(100%); opacity:0; } to { transform: translateY(0); opacity:1; } }
   #text-input-header {
@@ -958,6 +967,16 @@
   #install-now { height: 32px; padding: 0 14px; background: var(--accent); color: #fff; border: none; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   #install-dismiss { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--muted); cursor: pointer; border-radius: 6px; }
   #install-dismiss:active { background: var(--surface); }
+
+  /* iOS Safari zooms the viewport on any input/select with font-size < 16px.
+   * Override only on iOS (detected via the hover media query absence)
+   * using the standard CSS workaround: force 16px on focus, then revert via transform.
+   * The @supports touch-action trick targets only mobile webkit. */
+  @supports (-webkit-touch-callout: none) {
+    input, select, textarea {
+      font-size: max(16px, 1em) !important;
+    }
+  }
 
   #file-input { display: none; }
 
@@ -1200,7 +1219,7 @@
     <div id="splash-card-inner">
       <div id="splash-title">Modern <em>Measure</em></div>
       <div id="splash-subtitle">Enter Access Code</div>
-      <input id="splash-input" type="password" placeholder="••••••••••••••••••" autocomplete="off" autocorrect="off" spellcheck="false">
+      <input id="splash-input" type="password" placeholder="••••••••••••••••••" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
       <button id="splash-btn">Enter</button>
       <div id="splash-error"></div>
     </div>
@@ -1331,7 +1350,7 @@
       <button class="fmt-btn fmt-btn-i" id="fmt-italic" title="Italic">I</button>
       <button class="fmt-btn fmt-btn-u" id="fmt-underline" title="Underline">U</button>
     </div>
-    <input id="text-input-field" type="text" maxlength="240" placeholder="Enter annotation text…" autocomplete="off" autocorrect="off" spellcheck="false">
+    <input id="text-input-field" type="text" maxlength="240" placeholder="Enter annotation text…" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false">
     <button id="text-input-confirm">Place Text</button>
   </div>
 </div>
@@ -1676,7 +1695,7 @@
     <p>Draw a line over a known dimension, then enter its real-world length below.</p>
     <div id="cal-info-box">Tap Calibrate, then draw a line on the PDF first</div>
     <div class="cal-input-row">
-      <input class="cal-input" id="cal-value" type="number" step="any" inputmode="decimal" placeholder="Length" min="0.001">
+      <input class="cal-input" id="cal-value" type="number" step="any" inputmode="decimal" placeholder="Length" min="0.001" autocomplete="off" autocorrect="off" autocapitalize="none">
       <select class="cal-select" id="cal-unit">
         <option value="mm">mm</option>
         <option value="cm">cm</option>
@@ -1703,7 +1722,7 @@
       </button>
     </div>
     <button id="saveas-confirm">Save</button>
-    <input id="saveas-input" type="text" placeholder="filename" autocomplete="off" autocorrect="off" spellcheck="false">
+    <input id="saveas-input" type="text" placeholder="filename" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
   </div>
 </div>
 
@@ -1760,6 +1779,11 @@
 // ── PDF.JS ──
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+// ── iOS DETECTION ──
+// Covers iPhone, iPad (including iPadOS 13+ which reports as MacIntel)
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 // ── INLINE SERVICE WORKER ──
 const swCode = `
 const CACHE='mpdf-v2';
@@ -1777,7 +1801,8 @@ self.addEventListener('fetch',e=>{
     }).catch(()=>c);
   }));
 });`;
-if ('serviceWorker' in navigator) {
+// iOS Safari doesn't support service worker registration from blob: URLs — skip it there
+if ('serviceWorker' in navigator && !isIOS) {
   const blob = new Blob([swCode], { type: 'application/javascript' });
   navigator.serviceWorker.register(URL.createObjectURL(blob), { scope: './' }).catch(()=>{});
 }
@@ -1796,9 +1821,9 @@ document.head.appendChild(mLink);
 
 // ── STATE ──
 let pdfDoc=null, currentPage=1, totalPages=1;
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const renderScale = isIOS ? 1.0 : 2.0;
+// iOS has a hard ~16.7M pixel canvas limit — use a lower base scale to stay safe on large PDFs.
+// renderPage() further clamps this per-page if the PDF is unusually large.
+const renderScale = isIOS ? 1.5 : 2.0;
 let mode=null;         // 'measure'|'calibrate'|'draw'|'select'|'area'|'boxmeasure'|'boxanno'|'circleanno'|'textanno'|'cloudanno'|'perimeter'
 let drawState=null;    // { x, y } canvas coords of point 1
 let anglePts=[];       // [{x,y}] committed points: [hinge, leg1End, leg2End]
@@ -1885,6 +1910,7 @@ function loadPDF(file) {
   const reader = new FileReader();
   reader.onload = e => {
     const bytes = e.target.result;
+    // Keep our own live copy; savePdfBytes clones internally for IDB on iOS
     currentPdfBytes = bytes;
     savePdfBytes(currentFilename, bytes);
     pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise.then(doc => {
@@ -1913,6 +1939,7 @@ async function loadPdfFromUrl(url, label) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const arrayBuf = await resp.arrayBuffer();
     currentFilename = label + '.pdf';
+    // Keep our own copy; savePdfBytes clones for IDB on iOS
     currentPdfBytes = arrayBuf;
     savePdfBytes(currentFilename, arrayBuf);
     pdfjsLib.getDocument({ data: new Uint8Array(arrayBuf) }).promise.then(doc => {
@@ -1938,9 +1965,12 @@ document.getElementById('level8-btn').addEventListener('click', () => {
 });
 async function loadSessionFromStore(filename) {
   showToast('Loading…');
-  const bytes = await loadPdfBytes(filename);
-  if (!bytes) { showToast('PDF not found in storage'); return; }
+  const raw = await loadPdfBytes(filename);
+  if (!raw) { showToast('PDF not found in storage'); return; }
   currentFilename = filename;
+  // Own the buffer with .slice(0) so IDB doesn't neuter it later, and use the
+  // exact same reference for both pdfjsLib and currentPdfBytes.
+  const bytes = raw instanceof ArrayBuffer ? raw.slice(0) : raw;
   currentPdfBytes = bytes;
   pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise.then(doc => {
     pdfDoc=doc; totalPages=doc.numPages; currentPage=1;
@@ -1950,7 +1980,6 @@ async function loadSessionFromStore(filename) {
     canvasArea.style.display='block';
     if(doc.numPages>1) pageNav.classList.add('show');
     updatePageNav();
-    if (isIOS) { currentPdfBytes = null; }
     renderPage(currentPage, true); // renderPage calls loadSession which restores measurements
     // Close session dropdown/menu if open
     const sessionMenu=document.getElementById('session-menu');
@@ -1960,7 +1989,18 @@ async function loadSessionFromStore(filename) {
 
 function renderPage(num, reset=false) {
   pdfDoc.getPage(num).then(page => {
-    const vp = page.getViewport({ scale: renderScale });
+    // iOS hard canvas limit: ~16.7M pixels (iPhone) — exceed it and the canvas is silently blank.
+    // Compute a safe scale that keeps total pixels under 16M.
+    let scale = renderScale;
+    if (isIOS) {
+      const vp1 = page.getViewport({ scale: 1 });
+      const maxPixels = 16000000; // safe ceiling below the 16.7M iOS hard limit
+      const projected = vp1.width * scale * vp1.height * scale;
+      if (projected > maxPixels) {
+        scale = Math.floor(Math.sqrt(maxPixels / (vp1.width * vp1.height)) * 10) / 10;
+      }
+    }
+    const vp = page.getViewport({ scale });
     pdfCanvas.width=vp.width; pdfCanvas.height=vp.height;
     svgOverlay.setAttribute('width', vp.width);
     svgOverlay.setAttribute('height', vp.height);
@@ -1980,23 +2020,23 @@ function renderPage(num, reset=false) {
       redrawOverlay();
       pagePill.textContent=`${num}/${totalPages}`;
       // Extract CAD geometry for snapping (async, non-blocking)
-      if (isIOS) {
-        extractPageGeometryIOS(page, vp).then(function () {
-          if (pageSegments.length > 0 && snapEnabled) drawGeometryOverlayIOS();
-        });
-      } else {
-        extractPageGeometry(page, vp).then(() => {
+      extractPageGeometry(page, vp).then(() => {
               if (pageSegments.length > 0) {
           if (snapEnabled) drawGeometryOverlay();
         }
-        });
-      }
+      });
     });
   });
 }
 
 function fitToScreen() {
   const vw=canvasViewport.clientWidth, vh=canvasViewport.clientHeight;
+  // On iOS the first render can happen before layout is ready — clientWidth/Height are 0.
+  // Defer by one animation frame so the browser has had a chance to reflow.
+  if (vw === 0 || vh === 0) {
+    requestAnimationFrame(fitToScreen);
+    return;
+  }
   const cw=pdfCanvas.width, ch=pdfCanvas.height;
   zoom=Math.max(minZoom,Math.min(maxZoom,Math.min((vw-32)/cw,(vh-32)/ch)));
   panX=(vw-cw*zoom)/2; panY=Math.max(16,(vh-ch*zoom)/2);
@@ -2004,46 +2044,20 @@ function fitToScreen() {
 }
 
 let _rafRedraw = null;
-var _iosTouching = false, _iosRedrawDirty = false;
-if (isIOS) {
-  document.addEventListener('touchstart', function () {
-    _iosTouching = true;
-  }, { passive: true, capture: true });
-  function _iosTouchEnd() {
-    _iosTouching = false;
-    if (_iosRedrawDirty) {
-      _iosRedrawDirty = false;
-      setTimeout(function () { if (!_iosTouching) redrawOverlay(); }, 50);
-    }
-  }
-  document.addEventListener('touchend',    _iosTouchEnd, { passive: true, capture: true });
-  document.addEventListener('touchcancel', _iosTouchEnd, { passive: true, capture: true });
-};
 function applyTransform() {
   canvasWrap.style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
   zoomPill.textContent=Math.round(zoom*100)+'%';
   zoomPill.classList.add('show');
   clearTimeout(zoomTimer);
   zoomTimer=setTimeout(()=>{ zoomPill.classList.remove('show'); },900);
-  // iOS: gate SVG rebuild on touch state — zero rebuilds during pan
-  if (isIOS) {
-    _iosRedrawDirty = true; // mark dirty but never rebuild while touching
-  } else {
-    cancelAnimationFrame(_rafRedraw);
-    _rafRedraw = requestAnimationFrame(function () { redrawOverlay(); });
-  }
+  // Redraw labels in real-time during pinch — rAF-throttled so we never queue more than one
+  cancelAnimationFrame(_rafRedraw);
+  _rafRedraw = requestAnimationFrame(()=>{ redrawOverlay(); });
 }
 
-var _vpRectCache = null;
-if (isIOS) {
-  window.addEventListener('resize', function () { _vpRectCache = null; }, { passive: true });
-  window.addEventListener('orientationchange', function () { _vpRectCache = null; }, { passive: true });
-}
-function screenToCanvas(sx, sy) {
-  var r = isIOS
-    ? (_vpRectCache || (_vpRectCache = canvasViewport.getBoundingClientRect()))
-    : canvasViewport.getBoundingClientRect();
-  return { x: (sx - r.left - panX) / zoom, y: (sy - r.top - panY) / zoom };
+function screenToCanvas(sx,sy) {
+  const r=canvasViewport.getBoundingClientRect();
+  return { x:(sx-r.left-panX)/zoom, y:(sy-r.top-panY)/zoom };
 }
 
 // ── ANGLE SNAPPING ──
@@ -2086,10 +2100,13 @@ function openIDB(){
 async function savePdfBytes(filename, bytes){
   try{
     const db=await openIDB();
+    // iOS Safari's IDB .put() can transfer (neuter) the ArrayBuffer — clone it first
+    // so currentPdfBytes stays valid after the IDB write.
+    const safeBytes = bytes instanceof ArrayBuffer ? bytes.slice(0) : bytes;
     return new Promise((res,rej)=>{
       const tx=db.transaction(IDB_STORE,'readwrite');
-      tx.objectStore(IDB_STORE).put(bytes, filename);
-      tx.oncomplete = () => { if (isIOS) { currentPdfBytes = null; } res(true); };
+      tx.objectStore(IDB_STORE).put(safeBytes, filename);
+      tx.oncomplete=()=>res(true);
       tx.onerror=e=>rej(e.target.error);
     });
   }catch(e){ console.warn('IDB save failed',e); return false; }
@@ -2130,10 +2147,15 @@ function saveSession() {
     snapTypes: [...snapTypes],
     unitLabel: calibration?.unit || null
   };
-  // Save this PDF's session
-  localStorage.setItem(`mpdf-${currentFilename}`, JSON.stringify(session));
-  // Update session index
-  updateSessionIndex();
+  // Wrap in try/catch — iOS private browsing and full-storage both throw QuotaExceededError
+  // which would propagate up through autoSave() into pointer event handlers and crash the app.
+  try {
+    localStorage.setItem(`mpdf-${currentFilename}`, JSON.stringify(session));
+    updateSessionIndex();
+  } catch(e) {
+    // Storage full or private mode — silently ignore; measurements are still in memory
+    console.warn('Session save failed (storage full or private browsing):', e.name);
+  }
 }
 
 function loadSession(filename) {
@@ -2296,15 +2318,8 @@ renderSessionList();
     if(index.length>0){
       const latest=index[0];
       const bytes=await loadPdfBytes(latest.filename);
-      if (bytes) {
-        if (isIOS) {
-          document.addEventListener('pointerdown', function _dr() {
-            document.removeEventListener('pointerdown', _dr);
-            loadSessionFromStore(latest.filename);
-          }, { once: true, passive: true });
-        } else {
-          loadSessionFromStore(latest.filename);
-        }
+      if(bytes){
+        loadSessionFromStore(latest.filename);
       }
     }
   } catch(e){}
@@ -2489,11 +2504,14 @@ function showMagnifier(sx, sy, snapPt) {
   magCtx.fillStyle = '#fff';
   magCtx.fillRect(0, 0, MAG_SIZE, MAG_SIZE);
 
-  // Draw PDF canvas region
-  magCtx.drawImage(pdfCanvas,
-    drawCx - MAG_CAPTURE, drawCy - MAG_CAPTURE,
-    MAG_CAPTURE * 2, MAG_CAPTURE * 2,
-    0, 0, MAG_SIZE, MAG_SIZE);
+  // Draw PDF canvas region — clamp source rect to canvas bounds (iOS fails silently on out-of-bounds)
+  const srcX = Math.max(0, Math.min(pdfCanvas.width  - 1, drawCx - MAG_CAPTURE));
+  const srcY = Math.max(0, Math.min(pdfCanvas.height - 1, drawCy - MAG_CAPTURE));
+  const srcW = Math.min(MAG_CAPTURE * 2, pdfCanvas.width  - srcX);
+  const srcH = Math.min(MAG_CAPTURE * 2, pdfCanvas.height - srcY);
+  if (srcW > 0 && srcH > 0) {
+    magCtx.drawImage(pdfCanvas, srcX, srcY, srcW, srcH, 0, 0, MAG_SIZE, MAG_SIZE);
+  }
 
   // Draw annotations/measurements synchronously by walking SVG elements directly.
   // This replaces async SVG->Image serialization which caused flicker.
@@ -2628,7 +2646,8 @@ function clearDragTimer() {
 
 touchLayer.addEventListener('pointerdown', e=>{
   e.preventDefault();
-  touchLayer.setPointerCapture(e.pointerId);
+  // setPointerCapture throws NotFoundError on iOS Safari in certain race conditions
+  try { touchLayer.setPointerCapture(e.pointerId); } catch(_) {}
   activePointers[e.pointerId]={ x:e.clientX, y:e.clientY };
 
   if (Object.keys(activePointers).length>=2) {
@@ -2648,9 +2667,9 @@ touchLayer.addEventListener('pointerdown', e=>{
     // Area/perimeter/angle mode: taps handled in pointerup, no drag timer needed
     if (mode==='area' || mode==='perimeter' || mode==='angle') return;
 
-    // Ignore touches within 500ms of pinch ending — prevents ghost dot
-    // and ensures pointerup guard doesn't block a half-started gesture
-    if (Date.now()-pinchEndTime < 100) return;
+    // Ignore touches within 350ms of pinch ending — iOS needs longer guard than Android
+    // (iOS gesture system delivers stray pointerdown/up events after pinch lifts)
+    if (Date.now()-pinchEndTime < (isIOS ? 350 : 100)) return;
 
     if (p1Waiting && drawState) {
       dragActive=true;
@@ -2775,9 +2794,10 @@ touchLayer.addEventListener('pointerup', e=>{
   panGesture=null;
 
   const ptr=activePointers[e.pointerId];
-  // Capture the most up-to-date position: prefer live event coords over stored (fixes stale coords on fast mouse drags)
-  const liftX = e.clientX ?? ptr?.x ?? 0;
-  const liftY = e.clientY ?? ptr?.y ?? 0;
+  // On iOS Safari, pointerup e.clientX/Y are always numbers but can be 0 for an instant
+  // on very fast taps. Prefer the last stored pointermove position when available.
+  const liftX = (ptr?.x != null) ? ptr.x : (e.clientX || 0);
+  const liftY = (ptr?.y != null) ? ptr.y : (e.clientY || 0);
   delete activePointers[e.pointerId];
   const remaining=Object.keys(activePointers).length;
   hideMagnifier();
@@ -3051,6 +3071,9 @@ canvasViewport.addEventListener('wheel', e=>{
   redrawOverlay(); // recompute label sizes after zoom
 },{passive:false});
 
+// ── iOS: suppress native long-press context menu on the touch layer ──
+touchLayer.addEventListener('contextmenu', e => e.preventDefault(), { passive: false });
+
 // ── MODE ──
 const MEASURE_MODES=new Set(['measure','area','boxmeasure','calibrate','angle','perimeter']);
 const DRAW_MODES=new Set(['draw','boxanno','circleanno','ellipseanno','textanno','cloudanno']);
@@ -3189,87 +3212,16 @@ const colorNative=document.getElementById('color-input-native');
 if(colorNative){
   let _modeBeforeColor=null;
   colorNative.addEventListener('focus',()=>{ _modeBeforeColor=mode; });
+  // 'input' fires live on Android/desktop; on iOS it only fires when the picker is dismissed
   colorNative.addEventListener('input',e=>{
     drawColor=e.target.value;
     if(colorIndicator) colorIndicator.style.background=drawColor;
-
-// ── THICKNESS PICKER ──
-document.querySelectorAll('.thickness-btn').forEach(btn=>{
-  btn.addEventListener('click', e=>{
-    e.stopPropagation();
-    drawStroke = parseFloat(btn.dataset.stroke);
-    document.querySelectorAll('.thickness-btn').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-  });
-});
-
-// ── TEXT FORMAT CONTROLS ──
-const textFontSel = document.getElementById('text-font-select');
-const textSizeSel = document.getElementById('text-size-select');
-const fmtBold     = document.getElementById('fmt-bold');
-const fmtItalic   = document.getElementById('fmt-italic');
-const fmtUnderline= document.getElementById('fmt-underline');
-
-function syncFmtBar(a) {
-  // Populate controls from annotation object (when editing)
-  if (!a) return;
-  if(textFontSel) textFontSel.value = a.font || 'DM Sans';
-  if(textSizeSel) textSizeSel.value = a.size || 14;
-  if(fmtBold)      fmtBold.classList.toggle('active', !!a.bold);
-  if(fmtItalic)    fmtItalic.classList.toggle('active', !!a.italic);
-  if(fmtUnderline) fmtUnderline.classList.toggle('active', !!a.underline);
-  textFont = a.font || 'DM Sans';
-  textSize = a.size || 14;
-  textBold = !!a.bold; textItalic = !!a.italic; textUnderline = !!a.underline;
-}
-
-if(textFontSel) textFontSel.addEventListener('change', ()=>{ textFont=textFontSel.value; });
-if(textSizeSel) textSizeSel.addEventListener('change', ()=>{ textSize=parseInt(textSizeSel.value); });
-if(fmtBold) fmtBold.addEventListener('click', e=>{ e.stopPropagation(); textBold=!textBold; fmtBold.classList.toggle('active',textBold); });
-if(fmtItalic) fmtItalic.addEventListener('click', e=>{ e.stopPropagation(); textItalic=!textItalic; fmtItalic.classList.toggle('active',textItalic); });
-if(fmtUnderline) fmtUnderline.addEventListener('click', e=>{ e.stopPropagation(); textUnderline=!textUnderline; fmtUnderline.classList.toggle('active',textUnderline); });
   });
   colorNative.addEventListener('change',e=>{
     drawColor=e.target.value;
     if(colorIndicator) colorIndicator.style.background=drawColor;
-
-// ── THICKNESS PICKER ──
-document.querySelectorAll('.thickness-btn').forEach(btn=>{
-  btn.addEventListener('click', e=>{
-    e.stopPropagation();
-    drawStroke = parseFloat(btn.dataset.stroke);
-    document.querySelectorAll('.thickness-btn').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-  });
-});
-
-// ── TEXT FORMAT CONTROLS ──
-const textFontSel = document.getElementById('text-font-select');
-const textSizeSel = document.getElementById('text-size-select');
-const fmtBold     = document.getElementById('fmt-bold');
-const fmtItalic   = document.getElementById('fmt-italic');
-const fmtUnderline= document.getElementById('fmt-underline');
-
-function syncFmtBar(a) {
-  // Populate controls from annotation object (when editing)
-  if (!a) return;
-  if(textFontSel) textFontSel.value = a.font || 'DM Sans';
-  if(textSizeSel) textSizeSel.value = a.size || 14;
-  if(fmtBold)      fmtBold.classList.toggle('active', !!a.bold);
-  if(fmtItalic)    fmtItalic.classList.toggle('active', !!a.italic);
-  if(fmtUnderline) fmtUnderline.classList.toggle('active', !!a.underline);
-  textFont = a.font || 'DM Sans';
-  textSize = a.size || 14;
-  textBold = !!a.bold; textItalic = !!a.italic; textUnderline = !!a.underline;
-}
-
-if(textFontSel) textFontSel.addEventListener('change', ()=>{ textFont=textFontSel.value; });
-if(textSizeSel) textSizeSel.addEventListener('change', ()=>{ textSize=parseInt(textSizeSel.value); });
-if(fmtBold) fmtBold.addEventListener('click', e=>{ e.stopPropagation(); textBold=!textBold; fmtBold.classList.toggle('active',textBold); });
-if(fmtItalic) fmtItalic.addEventListener('click', e=>{ e.stopPropagation(); textItalic=!textItalic; fmtItalic.classList.toggle('active',textItalic); });
-if(fmtUnderline) fmtUnderline.addEventListener('click', e=>{ e.stopPropagation(); textUnderline=!textUnderline; fmtUnderline.classList.toggle('active',textUnderline); });
     closeAllSubmenus();
-    // Restore mode directly without triggering setMode side-effects
+    // Restore the draw mode that was active before the color picker opened
     if(_modeBeforeColor && DRAW_MODES.has(_modeBeforeColor)) {
       mode=_modeBeforeColor;
       drawBtn.classList.add('active');
@@ -3302,7 +3254,6 @@ const fmtItalic   = document.getElementById('fmt-italic');
 const fmtUnderline= document.getElementById('fmt-underline');
 
 function syncFmtBar(a) {
-  // Populate controls from annotation object (when editing)
   if (!a) return;
   if(textFontSel) textFontSel.value = a.font || 'DM Sans';
   if(textSizeSel) textSizeSel.value = a.size || 14;
@@ -4195,7 +4146,7 @@ if(moveFloat) {
       e.preventDefault();
       dragging=true;
       panGesture=null; // ensure pan doesn't start
-      touchLayer.setPointerCapture(e.pointerId);
+      try { touchLayer.setPointerCapture(e.pointerId); } catch(_) {}
     };
     const onMove=(e)=>{
       if(!dragging) return;
@@ -4254,6 +4205,7 @@ let pageSegments = [];        // [{x1,y1,x2,y2, isCurve}] in canvas pixels
 let snapGrid = null;          // spatial hash for fast lookup
 let snapResult = null;
 let snapGeometryEl = null;    // <g> element showing the geometry overlay
+let _snapVpXform = '';        // debug: current viewport transform string
 const SNAP_RADIUS_PX = 20;
 // Minimum segment length (in canvas pixels) below which snap points are skipped.
 // 0 = disabled (snap everything). User-adjustable via snap dropdown.
@@ -4738,13 +4690,14 @@ async function extractPageGeometry(page, viewport) {
   try {
     const ops = await page.getOperatorList();
 
-    const cpCount = ops.fnArray.filter(f=>f===91).length;
-    // Log first constructPath
-    const firstCp = ops.fnArray.indexOf(91);
-    if (firstCp>=0) console.log('[Snap] First constructPath:', {ops:ops.argsArray[firstCp][0], coords:ops.argsArray[firstCp][1]});
-
     processOps(ops.fnArray, ops.argsArray, [1,0,0,1,0,0]);
 
+    // Hard cap: on iOS memory is very limited — clamp to 8k segments.
+    // On other platforms allow up to 30k before capping.
+    const SEG_CAP = isIOS ? 8000 : 30000;
+    if (pageSegments.length > SEG_CAP) {
+      pageSegments = pageSegments.slice(0, SEG_CAP);
+    }
 
     // Deduplicate
     const seen = new Set();
@@ -4755,80 +4708,11 @@ async function extractPageGeometry(page, viewport) {
       seen.add(k); return true;
     });
 
-    if (pageSegments.length>0) console.log('[Snap] Sample segment:', pageSegments[0]);
-
     snapGrid = buildSnapGrid(pageSegments);
 
   } catch(e) {
   }
 
-}
-
-// ── iOS batched extractor + sibling-SVG overlay (ios-v15) ──
-async function extractPageGeometryIOS(page, viewport) {
-  var geo = document.getElementById('_iosGeoSvg');
-  if (geo) geo.innerHTML = '';
-  pageSegments = []; snapGrid = null;
-  var vt = viewport.transform;
-  function cc(c,m){return[c[0]*m[0]+c[2]*m[1],c[1]*m[0]+c[3]*m[1],c[0]*m[2]+c[2]*m[3],c[1]*m[2]+c[3]*m[3],c[0]*m[4]+c[2]*m[5]+c[4],c[1]*m[4]+c[3]*m[5]+c[5]];}
-  function makeH(ctm) {
-    function pc(px,py){var x=ctm[0]*px+ctm[2]*py+ctm[4],y=ctm[1]*px+ctm[3]*py+ctm[5];return{x:vt[0]*x+vt[2]*y+vt[4],y:vt[1]*x+vt[3]*y+vt[5]};}
-    function ps(ax,ay,bx,by){var p1=pc(ax,ay),p2=pc(bx,by);if(Math.hypot(p2.x-p1.x,p2.y-p1.y)>=2)pageSegments.push({x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,isCurve:false});}
-    return{pdfToCanvas:pc,pushSeg:ps};
-  }
-  function yn(){return new Promise(function(r){setTimeout(r,0);});}
-  try {
-    var ops=await page.getOperatorList(),fn=ops.fnArray,ar=ops.argsArray;
-    var ctm=[1,0,0,1,0,0],st=[[1,0,0,1,0,0]];
-    for(var i=0;i<fn.length;i++){
-      if(i%30===0)await yn();
-      var f=fn[i],a=ar[i];
-      if(f===_OPC.save){st.push(ctm.slice());}
-      else if(f===_OPC.restore){if(st.length>1)ctm=st.pop();}
-      else if(f===_OPC.transform){ctm=cc(ctm,a);}
-      else if(f===_OPC.paintFormXObjectBegin){st.push(ctm.slice());if(a&&Array.isArray(a[1])&&a[1].length===6)ctm=cc(ctm,a[1]);}
-      else if(f===_OPC.paintFormXObjectEnd){if(st.length>1)ctm=st.pop();}
-      else if(f===_OPC.constructPath){var h=makeH(ctm);decodeConstructPath(a[0],a[1],h.pdfToCanvas,h.pushSeg);}
-    }
-    await yn();
-    var seen=new Set(),dd=[];
-    for(var j=0;j<pageSegments.length;j++){
-      if(j%500===0)await yn();
-      var s=pageSegments[j];
-      var k=Math.round(s.x1)+','+Math.round(s.y1)+','+Math.round(s.x2)+','+Math.round(s.y2);
-      var rev=Math.round(s.x2)+','+Math.round(s.y2)+','+Math.round(s.x1)+','+Math.round(s.y1);
-      if(!seen.has(k)&&!seen.has(rev)){seen.add(k);dd.push(s);}
-    }
-    pageSegments=dd; snapGrid=buildSnapGrid(pageSegments);
-    await yn();
-  } catch(e){console.warn('[iOS snap]',e);}
-}
-
-function drawGeometryOverlayIOS() {
-  var ns='http://www.w3.org/2000/svg';
-  var geo=document.getElementById('_iosGeoSvg');
-  if(!geo){
-    geo=document.createElementNS(ns,'svg');
-    geo.id='_iosGeoSvg';
-    geo.setAttribute('pointer-events','none');
-    geo.style.cssText='position:absolute;top:0;left:0;overflow:visible;';
-    svgOverlay.parentNode.insertBefore(geo,svgOverlay);
-  }
-  geo.setAttribute('width',svgOverlay.getAttribute('width'));
-  geo.setAttribute('height',svgOverlay.getAttribute('height'));
-  geo.innerHTML='';
-  if(!pageSegments||!pageSegments.length)return;
-  var d='';
-  for(var i=0;i<pageSegments.length;i++){
-    var s=pageSegments[i];
-    d+='M'+s.x1.toFixed(1)+','+s.y1.toFixed(1)+'L'+s.x2.toFixed(1)+','+s.y2.toFixed(1);
-  }
-  var path=document.createElementNS(ns,'path');
-  path.setAttribute('d',d);
-  path.setAttribute('stroke','rgba(39,174,96,0.2)');
-  path.setAttribute('stroke-width','0.8');
-  path.setAttribute('fill','none');
-  geo.appendChild(path);
 }
 
 // ── Ghost geometry overlay ────────────────────────
@@ -4840,8 +4724,15 @@ function drawGeometryOverlay() {
   g.id = 'snap-geometry-overlay';
   g.setAttribute('pointer-events','none');
 
-  // Draw all segments as faint lines
-  for (const seg of pageSegments) {
+  // Hard limit on SVG DOM nodes — iOS Safari struggles with large SVG DOMs.
+  // The snap grid still uses all segments for query accuracy; this only limits the visual overlay.
+  const OVERLAY_CAP = isIOS ? 2000 : 8000;
+  const segsToShow = pageSegments.length > OVERLAY_CAP
+    ? pageSegments.slice(0, OVERLAY_CAP)
+    : pageSegments;
+
+  // Draw segments as faint lines
+  for (const seg of segsToShow) {
     const line = document.createElementNS('http://www.w3.org/2000/svg','line');
     line.setAttribute('x1', seg.x1); line.setAttribute('y1', seg.y1);
     line.setAttribute('x2', seg.x2); line.setAttribute('y2', seg.y2);
@@ -5376,6 +5267,27 @@ textInputSheet.addEventListener('pointerdown', e => {
   if (e.target === textInputSheet) hideTextInputSheet();
 });
 
+// ── iOS KEYBOARD AVOIDANCE ──
+// env(keyboard-inset-height) is Chrome-Android only and doesn't exist on iOS.
+// On iOS, use visualViewport.resize to push bottom sheets up when the keyboard opens.
+if (isIOS && window.visualViewport) {
+  function _iosKeyboardAdjust() {
+    // visualViewport.height shrinks when the keyboard is visible.
+    // Translate bottom sheets up by the amount the viewport has shrunk from window.innerHeight.
+    const shrink = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
+    const panels = [
+      document.getElementById('text-input-panel'),
+      document.getElementById('saveas-panel'),
+      document.getElementById('cal-panel'),
+    ];
+    panels.forEach(p => {
+      if (p) p.style.transform = shrink > 10 ? `translateY(-${shrink}px)` : '';
+    });
+  }
+  window.visualViewport.addEventListener('resize', _iosKeyboardAdjust);
+  window.visualViewport.addEventListener('scroll', _iosKeyboardAdjust);
+}
+
 // ── SHARE / SCREENSHOT ──
 let shareTimer=null;
 function showShareProgress(msg){
@@ -5416,16 +5328,32 @@ async function saveMpdf() {
     };
 
     const out  = new Blob([JSON.stringify(bundle)], { type: 'application/json' });
+    const stem = (currentFilename || 'session').replace(/\.pdf$/i, '').replace(/\.mpdf$/i, '');
+    const outFilename = stem + '.mpdf';
+
+    if (isIOS && navigator.share && navigator.canShare) {
+      // iOS Safari ignores <a download> — use Web Share API with a File object instead
+      const file = new File([out], outFilename, { type: 'application/json' });
+      if (navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: 'MeasurePDF Session' });
+          showToast('Saved ' + outFilename);
+        } catch(shareErr) {
+          if (shareErr.name !== 'AbortError') showToast('Share cancelled');
+        }
+        return;
+      }
+    }
+    // Desktop / Android: standard anchor-click download
     const url  = URL.createObjectURL(out);
     const a    = document.createElement('a');
-    const stem = (currentFilename || 'session').replace(/\.pdf$/i, '');
     a.href = url;
-    a.download = stem + '.mpdf';
+    a.download = outFilename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    showToast('Saved as ' + stem + '.mpdf');
+    showToast('Saved as ' + outFilename);
   } catch(e) {
     console.error('Save failed', e);
     showToast('Save failed — ' + e.message);
@@ -5503,15 +5431,23 @@ document.addEventListener('pointerdown', e => {
 // ── LOAD .mpdf ──
 async function loadMpdf(file) {
   try {
-    const text = await file.text();
+    // file.text() requires Safari 14+ — use FileReader as a safe fallback for older iOS
+    const text = await (typeof file.text === 'function'
+      ? file.text()
+      : new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = rej;
+          r.readAsText(file);
+        }));
     const bundle = JSON.parse(text);
     if (!bundle.pdfB64 || bundle.version !== 1) { showToast('Invalid .mpdf file'); return; }
 
-    // Decode PDF
+    // Decode PDF — slice to own the buffer; savePdfBytes will clone again for IDB on iOS
     const binary = atob(bundle.pdfB64);
     const bytes  = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const ab = bytes.buffer;
+    const ab = bytes.buffer.slice(0); // own copy — IDB write won't neuter this
 
     currentFilename  = bundle.filename || file.name;
     currentPdfBytes  = ab;
@@ -5559,15 +5495,29 @@ shareBtn.onclick=async()=>{
     const ctx=out.getContext('2d');
     // Draw PDF
     ctx.drawImage(pdfCanvas,0,0);
-    // Serialize SVG and draw it
+    // Serialize SVG overlay — iOS Safari blocks blob: URLs as Image() src,
+    // so use a data: URL on iOS and blob: everywhere else.
     const svgData=new XMLSerializer().serializeToString(svgOverlay);
-    const svgBlob=new Blob([svgData],{type:'image/svg+xml;charset=utf-8'});
-    const url=URL.createObjectURL(svgBlob);
+    let svgUrl;
+    if (isIOS) {
+      svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+    } else {
+      const svgBlob=new Blob([svgData],{type:'image/svg+xml;charset=utf-8'});
+      svgUrl=URL.createObjectURL(svgBlob);
+    }
     await new Promise((res,rej)=>{
       const img=new Image();
-      img.onload=()=>{ ctx.drawImage(img,0,0); URL.revokeObjectURL(url); res(); };
-      img.onerror=rej;
-      img.src=url;
+      img.onload=()=>{
+        ctx.drawImage(img,0,0);
+        if (!isIOS) URL.revokeObjectURL(svgUrl);
+        res();
+      };
+      img.onerror=()=>{
+        // SVG rendering failed (e.g. tainted canvas) — share the PDF-only image
+        if (!isIOS) URL.revokeObjectURL(svgUrl);
+        res(); // don't reject — still share what we have
+      };
+      img.src=svgUrl;
     });
     showShareProgress('Sharing…');
     const filename=(currentFilename||'pdf').replace(/\.pdf$/i,'')+'-annotated.png';
@@ -5588,10 +5538,28 @@ shareBtn.onclick=async()=>{
   }catch(e){ showShareProgress('Error — try again'); hideShareProgress(); }
 };
 
-function downloadCanvas(canvas,filename){
-  const a=document.createElement('a');
-  a.href=canvas.toDataURL('image/png');
-  a.download=filename; a.click();
+function downloadCanvas(canvas, filename) {
+  if (isIOS) {
+    // iOS Safari silently ignores <a download> — open the image in a new tab instead
+    // so the user can long-press → Save Image from the native share sheet.
+    const url = canvas.toDataURL('image/png');
+    const w = window.open();
+    if (w) {
+      w.document.write(`<html><head><title>${filename}</title></head><body style="margin:0;background:#000">` +
+        `<img src="${url}" style="max-width:100%;display:block">` +
+        `<p style="font:14px/2 sans-serif;color:#fff;text-align:center;padding:8px">` +
+        `Long-press the image and tap <b>Save to Photos</b></p></body></html>`);
+      w.document.close();
+    } else {
+      // Pop-up blocked — show data URL directly
+      window.location.href = url;
+    }
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = canvas.toDataURL('image/png');
+  a.download = filename;
+  a.click();
 }
 
 // ── PAGE NAV ──
@@ -5638,8 +5606,5 @@ document.addEventListener('keydown',e=>{
 });
 </script>
 
-
-<!-- ios-v15 -->
-<div style="position:fixed;bottom:4px;right:6px;z-index:9999;font-family:monospace;font-size:9px;color:rgba(255,255,255,0.25);pointer-events:none;letter-spacing:0.05em;">ios-v15</div>
 </body>
 </html>
