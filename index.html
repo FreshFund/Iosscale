@@ -1881,7 +1881,6 @@ window.addEventListener('appinstalled', () => installBanner.classList.remove('sh
 
 // ── PDF LOADING ──
 function loadPDF(file) {
-  if (isIOS) { pageSegments = []; snapGrid = null; } // free prev PDF geometry
   currentFilename=file.name;
   const reader = new FileReader();
   reader.onload = e => {
@@ -1889,7 +1888,6 @@ function loadPDF(file) {
     currentPdfBytes = bytes;
     savePdfBytes(currentFilename, bytes);
     pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise.then(doc => {
-      if (isIOS) { currentPdfBytes = null; } // pdf.js worker has it, free main-thread copy
       pdfDoc=doc; totalPages=doc.numPages; currentPage=1;
       measurements=[]; annotations=[]; calibration=null; calLine=null; selectedItem=null;
       scaleBadge.classList.remove('visible');
@@ -1945,7 +1943,6 @@ async function loadSessionFromStore(filename) {
   currentFilename = filename;
   currentPdfBytes = bytes;
   pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise.then(doc => {
-    if (isIOS) { currentPdfBytes = null; } // pdf.js worker has it, free main-thread copy
     pdfDoc=doc; totalPages=doc.numPages; currentPage=1;
     measurements=[]; annotations=[]; calibration=null; calLine=null; selectedItem=null;
     scaleBadge.classList.remove('visible');
@@ -2006,7 +2003,6 @@ function applyTransform() {
   zoomPill.classList.add('show');
   clearTimeout(zoomTimer);
   zoomTimer=setTimeout(()=>{ zoomPill.classList.remove('show'); },900);
-  // iOS: skip SVG rebuild during pan — one redraw 150 ms after finger lifts
   if (isIOS) {
     clearTimeout(_iosRDTimer);
     _iosRDTimer = setTimeout(function () { redrawOverlay(); }, 150);
@@ -2071,8 +2067,8 @@ async function savePdfBytes(filename, bytes){
     return new Promise((res,rej)=>{
       const tx=db.transaction(IDB_STORE,'readwrite');
       tx.objectStore(IDB_STORE).put(bytes, filename);
-      tx.oncomplete = () => { if (isIOS) { currentPdfBytes = null; } res(true); };
-      tx.onerror = e => rej(e.target.error);
+      tx.oncomplete=()=>res(true);
+      tx.onerror=e=>rej(e.target.error);
     });
   }catch(e){ console.warn('IDB save failed',e); return false; }
 }
@@ -2278,15 +2274,8 @@ renderSessionList();
     if(index.length>0){
       const latest=index[0];
       const bytes=await loadPdfBytes(latest.filename);
-      if (bytes) {
-        if (isIOS) {
-          document.addEventListener('pointerdown', function _dr() {
-            document.removeEventListener('pointerdown', _dr);
-            loadSessionFromStore(latest.filename);
-          }, { once: true, passive: true });
-        } else {
-          loadSessionFromStore(latest.filename);
-        }
+      if(bytes){
+        loadSessionFromStore(latest.filename);
       }
     }
   } catch(e){}
@@ -5551,6 +5540,57 @@ document.addEventListener('keydown',e=>{
   if((e.key==='Delete'||e.key==='Backspace')&&selectedItem) { e.preventDefault(); deleteSelected(); }
   if(e.key==='Escape'){drawState=null;p1Waiting=false;areaPts=[];anglePts=[];_angleLive=null;hideMagnifier();selectedItem=null;clearSnapIndicator();snapResult=null;if(mode)setMode(null);redrawOverlay();}
 });
+
+// iOS memory management — injected by patcher v10
+(function () {
+  if (!isIOS) return;
+
+  // Wrap pdfjsLib.getDocument: free currentPdfBytes once worker has data
+  var _origGetDoc = pdfjsLib.getDocument.bind(pdfjsLib);
+  pdfjsLib.getDocument = function (params) {
+    var task = _origGetDoc(params);
+    task.promise = task.promise.then(function (doc) {
+      setTimeout(function () { currentPdfBytes = null; }, 200);
+      return doc;
+    }, function (e) { return Promise.reject(e); });
+    return task;
+  };
+
+  // Wrap loadPDF: clear old geometry before loading new PDF
+  var _origLoadPDF = loadPDF;
+  loadPDF = function (file) {
+    pageSegments = []; snapGrid = null;
+    _origLoadPDF(file);
+  };
+
+  // Wrap loadSessionFromStore: clear geometry + defer until first tap
+  var _origLoadSession = loadSessionFromStore;
+  loadSessionFromStore = async function (filename) {
+    pageSegments = []; snapGrid = null;
+    return _origLoadSession(filename);
+  };
+
+  // Block the startup auto-restore IIFE from running immediately.
+  // It calls loadPdfBytes — return null so it bails, then restore on first tap.
+  var _origLoadPdfBytes = loadPdfBytes;
+  var _tapReady = false;
+  loadPdfBytes = async function (filename) {
+    if (!_tapReady) return null;
+    return _origLoadPdfBytes(filename);
+  };
+  document.addEventListener('pointerdown', function _firstTap() {
+    document.removeEventListener('pointerdown', _firstTap);
+    _tapReady = true;
+    loadPdfBytes = _origLoadPdfBytes; // restore original
+    if (!pdfDoc) {
+      try {
+        var idx = JSON.parse(localStorage.getItem('mpdf-index') || '[]');
+        if (idx.length > 0) loadSessionFromStore(idx[0].filename);
+      } catch(e) {}
+    }
+  }, { once: true, passive: true });
+
+})();
 </script>
 
 </body>
